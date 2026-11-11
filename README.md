@@ -1,10 +1,8 @@
 # CoKiBan
 
-Bóc tách video và mô tả chính xác các vật thể, nhân vật, bối cảnh, bố cục và chuyển động camera theo thời gian, kèm frame bằng chứng. [3JsStudio](https://github.com/tuantranmarinainter-ops/3JsStudio) sử dụng kết quả này làm đầu vào dựng video.
+Chuẩn bị kịch bản hình và bằng chứng tham khảo cho quy trình sản xuất video của [3JsStudio](https://github.com/tuantranmarinainter-ops/3JsStudio).
 
 Video + SRT → frame và shot ứng viên → AI/người dùng phân tích → storyboard HTML + dữ liệu episode → 3JsStudio dựng Three.js/HyperFrames.
-
-Đặc tả nhiệm vụ nằm trong [docs/analysis-scope.md](docs/analysis-scope.md). Đánh giá mã nguồn rea-video và những cơ chế có thể học nằm trong [docs/rea-video-review.md](docs/rea-video-review.md).
 
 ## Bản MVP
 
@@ -13,7 +11,8 @@ Video + SRT → frame và shot ứng viên → AI/người dùng phân tích →
 - Phát hiện điểm cắt ứng viên; ảnh đầu/giữa/cuối từng shot, JSON giữ nguyên lời kể.
 - Xuất HTML tự chứa ảnh, chia theo byte thực, mặc định dưới 25 MB mỗi file.
 - `--all-frames` lưu mọi frame ra thư mục ảnh. HTML vẫn dùng ảnh đại diện từng shot để tiết kiệm dung lượng.
-- AI điền mô tả nhân vật, bối cảnh, camera, diễn xuất và độ chắc chắn vào JSON rồi xuất lại HTML.
+- AI/người xem điền hồ sơ vật thể, vị trí/hành động từng shot, timeline camera và quan sát có bằng chứng vào JSON; xuất lại HTML.
+- `validate` kiểm tra liên kết ID, thời gian, tọa độ, frame bằng chứng và báo các phần chưa duyệt.
 - Xuất dữ liệu nháp `episode.js`, `shots.js`, `narration.json`, `narration.txt` và bàn giao cho 3JsStudio.
 
 Mô tả thị giác cần agent xem ảnh. Tool chưa tự gọi mô hình AI, chưa tạo audio hoặc video thành phẩm. Bộ export khớp quy ước dữ liệu được tài liệu hóa của 3JsStudio; phần engine timeline và composition của repo đích còn cần hoàn thiện.
@@ -22,7 +21,8 @@ Mô tả thị giác cần agent xem ảnh. Tool chưa tự gọi mô hình AI, 
 
 ```bash
 python tools/cokiban.py analyze "video.mp4" --srt "video.vi.srt" --out outputs/demo
-# Sửa outputs/demo/analysis.json sau khi xem ảnh
+# Đọc docs/annotation-guide.md, xem ảnh và điền outputs/demo/analysis.json
+python tools/cokiban.py validate outputs/demo/analysis.json
 python tools/cokiban.py render outputs/demo/analysis.json --max-mb 25
 python tools/cokiban.py export-3js outputs/demo/analysis.json --out outputs/episode-draft
 ```
@@ -36,6 +36,9 @@ python tools/cokiban.py export-3js outputs/demo/analysis.json --out outputs/epis
 Đọc `skills/video-to-storyboard/SKILL.md` để chạy quy trình phân tích và bàn giao. Đây là gói hướng dẫn trong repo; việc tích hợp vào danh mục skill của từng ứng dụng thực hiện riêng. Claude Code có thể đọc trực tiếp qua `CLAUDE.md`.
 
 ## Dữ liệu
+
+[Hướng dẫn điền bốn phần và ví dụ](docs/annotation-guide.md). Với dữ liệu schema 1 cũ, tạo bản mới trong cùng thư mục để giữ đường dẫn frames: `python tools/cokiban.py migrate outputs/demo/analysis.json --out outputs/demo/analysis-v2.json`.
+
 
 `analysis.json` giữ timestamp nguồn, ánh xạ frame, phụ đề, shot, registry nhân vật/bối cảnh, observations và reconstruction. Khoảng frame là [start_frame, end_frame_exclusive). `docs/3jsstudio-contract.md` ghi quy tắc ánh xạ. Mẫu trường được tạo trực tiếp bởi lệnh analyze.
 

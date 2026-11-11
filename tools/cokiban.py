@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from annotations import upgrade, validate
+
 
 def run(args):
     result = subprocess.run(args, capture_output=True, text=True)
@@ -120,6 +122,7 @@ def prepare(args, dest):
                 actors={}, places={}, warnings=['Cut boundaries are candidates. Visual descriptions require AI/human review.'])
     if any(c['end']>meta['duration'] for c in lines):
         data['warnings'].append('Some subtitle cues extend beyond the video. Preserve and review source timing.')
+    upgrade(data)
     write_json(dest/'analysis.json',data)
     render(data,dest,args.max_mb)
 
@@ -128,12 +131,23 @@ def render(data, folder, max_mb):
     limit = int(max_mb*1_000_000)
     header = '<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CoKiBan storyboard</title><style>body{background:#142031;color:#edf3fa;font:16px/1.6 system-ui;max-width:1100px;margin:auto;padding:20px}article{border:1px solid #526477;padding:16px;margin:16px 0;border-radius:12px}.frames{display:flex;gap:12px;overflow:auto}figure{margin:0}img{width:180px}pre{white-space:pre-wrap}small{color:#b5c9de}</style><h1>CoKiBan · Storyboard</h1><p>Điểm cắt tự động là ứng viên. Nội dung còn trống cần AI hoặc người dựng bổ sung.</p>'
     cards=[]
+    registry = html.escape(json.dumps(data.get('objects', {}), ensure_ascii=False, indent=2))
+    if data.get('objects'):
+        header += '<h2>Hồ sơ vật thể</h2><pre>' + registry + '</pre>'
     for shot in data['shots']:
         card=f'<article id="{shot["id"]}"><h2>{shot["id"]} · {shot["start"]:.3f}–{shot["end"]:.3f}s</h2><p>F{shot["start_frame"]}–F{shot["end_frame_exclusive"]-1} · {html.escape(shot["status"])}</p><div class="frames">'
-        for f in shot['references']:
+        evidence_frames = set(shot['references'])
+        for obj in data.get('objects', {}).values():
+            evidence_frames.update(f for f in obj.get('frame_ids', []) if shot['start_frame'] <= f < shot['end_frame_exclusive'])
+        for group in ('observations', 'object_instances', 'motion_events', 'camera_timeline'):
+            for item in shot.get(group, []): evidence_frames.update(item.get('frame_ids', []))
+        for f in sorted(evidence_frames):
             blob=base64.b64encode((folder/'frames'/f'f{f:08d}.jpg').read_bytes()).decode()
             card+=f'<figure><img src="data:image/jpeg;base64,{blob}"><figcaption>F{f} · {data["source"]["frame_times"][f]:.3f}s</figcaption></figure>'
         card+='</div>'
+        for field in ('object_instances', 'motion_events', 'camera_timeline', 'observations'):
+            if shot.get(field):
+                card += '<h3>' + field + '</h3><pre>' + html.escape(json.dumps(shot[field], ensure_ascii=False, indent=2)) + '</pre>'
         for field in ['description','camera','action','lighting','continuity']:
             card+=f'<p><b>{field}</b> {html.escape(shot.get(field) or "Chưa phân tích")}</p>'
         card+='<p>'+html.escape(' '.join(c['text'] for c in data['subtitles'] if c['line'] in shot['lines']))+'</p></article>'
@@ -154,7 +168,7 @@ def render(data, folder, max_mb):
         (folder/f'storyboard-part-{i:02}.html').write_text(page,encoding='utf-8')
 
 
-def export_studio(data, dest):
+def export_studio(data, dest, review_gaps=None):
     shots=[]
     unresolved=[]
     allowed={'establish','crowd','walkBy','follow','closeup','reaction','overShoulder','insert','chase','reveal','dialogue'}
@@ -176,6 +190,8 @@ def export_studio(data, dest):
     write_json(dest/'reference.json',data)
     write_json(dest/'integration-status.json',dict(status='draft',fallback_shot_types=unresolved,
                reviewed_shots=sum(s.get('status')=='reviewed' for s in data['shots']),
+               review_gaps=review_gaps if review_gaps is not None else [],
+               inspected_frames=len(set(data.get('review',{}).get('inspected_frames',[]))),
                narration_audio_available=False, target='3JsStudio',target_revision='a9c33b3834cd1c0e95b7ebddc9a05e845a885237'))
     (dest/'HANDOFF.md').write_text('''# CoKiBan → 3JsStudio
 
@@ -203,13 +219,29 @@ def main():
     a.add_argument('--min-shot',type=float,default=.15);a.add_argument('--width',type=int,default=240)
     a.add_argument('--all-frames',action='store_true');a.add_argument('--max-mb',type=float,default=25)
     r=sub.add_parser('render');r.add_argument('analysis',type=Path);r.add_argument('--max-mb',type=float,default=25)
+    m=sub.add_parser('migrate');m.add_argument('analysis',type=Path);m.add_argument('--out',type=Path,required=True)
+    v=sub.add_parser('validate');v.add_argument('analysis',type=Path)
     e=sub.add_parser('export-3js');e.add_argument('analysis',type=Path);e.add_argument('--out',required=True,type=Path)
     args=p.parse_args()
     try:
         if hasattr(args,'max_mb') and (not math.isfinite(args.max_mb) or args.max_mb<=0):
             raise ValueError('--max-mb must be positive')
+        if args.command in ('validate', 'migrate'):
+            data = json.loads(args.analysis.read_text(encoding='utf-8'))
+            if args.command == 'migrate':
+                if args.out.exists(): raise ValueError('Output already exists')
+                write_json(args.out, upgrade(data)); print(args.out); return
+            errors, gaps = validate(upgrade(data), args.analysis.parent)
+            print(json.dumps({'errors':errors,'review_gaps':gaps,'inspected_frames':len(set(data['review']['inspected_frames'])),'total_frames':len(data['source']['frame_times'])},ensure_ascii=False,indent=2))
+            if errors: raise ValueError('Validation failed')
+            return
+        if args.command in ('render', 'export-3js'):
+            data = upgrade(json.loads(args.analysis.read_text(encoding='utf-8')))
+            errors, gaps = validate(data, args.analysis.parent)
+            if errors: raise ValueError('Invalid annotations: ' + '; '.join(errors[:10]))
+            if gaps: print(f'Warning: {len(gaps)} review gaps remain; run validate for details')
         if args.command=='render':
-            render(json.loads(args.analysis.read_text(encoding='utf-8')),args.analysis.parent,args.max_mb);return
+            render(data,args.analysis.parent,args.max_mb);return
         if args.out.exists():
             raise ValueError('Output already exists; choose a new directory to preserve prior work')
         args.out.parent.mkdir(parents=True,exist_ok=True)
@@ -222,7 +254,7 @@ def main():
                     if not shutil.which(tool):raise ValueError(f'Missing {tool}')
                 prepare(args,stage)
             else:
-                export_studio(json.loads(args.analysis.read_text(encoding='utf-8')),stage)
+                export_studio(data,stage,gaps)
             stage.rename(args.out)
         print(args.out)
     except (ValueError,KeyError,OSError,subprocess.CalledProcessError) as exc:
