@@ -1,8 +1,10 @@
 # CoKiBan
 
-Chuẩn bị kịch bản hình và bằng chứng tham khảo cho quy trình sản xuất video của [3JsStudio](https://github.com/tuantranmarinainter-ops/3JsStudio).
+Bóc tách video và mô tả chính xác các vật thể, nhân vật, bối cảnh, bố cục và chuyển động camera theo thời gian, kèm frame bằng chứng. [3JsStudio](https://github.com/tuantranmarinainter-ops/3JsStudio) sử dụng kết quả này làm đầu vào dựng video.
 
 Video + SRT → frame và shot ứng viên → AI/người dùng phân tích → storyboard HTML + dữ liệu episode → 3JsStudio dựng Three.js/HyperFrames.
+
+Đặc tả nhiệm vụ nằm trong [docs/analysis-scope.md](docs/analysis-scope.md). Đánh giá mã nguồn rea-video và những cơ chế có thể học nằm trong [docs/rea-video-review.md](docs/rea-video-review.md).
 
 ## Bản MVP
 
